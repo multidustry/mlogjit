@@ -1,0 +1,15 @@
+[package]
+name = "mlogjit"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.99"
+cranelift-codegen = "0.122.0"
+cranelift-frontend = "0.122.0"
+cranelift-jit = "0.122.0"
+cranelift-module = "0.122.0"
+log = "0.4.27"
+memoffset = "0.9.1"
+pretty_env_logger = "0.5.0"
+thiserror = "2.0.15"
