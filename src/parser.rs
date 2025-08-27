@@ -106,3 +106,26 @@ fn split_tokens(input: &str) -> Vec<String> {
 
     tokens
 }
+
+#[test]
+fn spliting() {
+    assert_eq!(vec!["a", "\"a\""], split_tokens("a \"a\""));
+}
+
+#[test]
+fn spliting_empty() {
+    assert_eq!(Vec::<String>::new(), split_tokens(""));
+}
+
+#[test]
+fn set_to_ir() {
+    assert_eq!(
+        Instr::Set("a".into(), Operand::Const(10.0)),
+        parse_line("set a 10").unwrap()
+    )
+}
+
+#[test]
+fn bad_insr() {
+    parse_line("asfdasdfsadfjkj").unwrap_err();
+}

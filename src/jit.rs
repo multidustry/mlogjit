@@ -1,11 +1,7 @@
 use core::panic;
 use std::collections::HashMap;
 
-use cranelift_codegen::{
-    bforest::Set,
-    gimli::DW_OP_const1s,
-    ir::{AbiParam, InstBuilder, ValueLabelStart},
-};
+use cranelift_codegen::ir::{AbiParam, InstBuilder, MemFlags, Value};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::Module;
@@ -13,6 +9,7 @@ use cranelift_module::Module;
 use crate::ir::{Instr, Operand};
 
 #[repr(C)]
+#[derive(Debug)]
 pub struct ProcessorContext {
     pub registers: [f64; 256],
 }
@@ -68,14 +65,13 @@ impl JitCompiler {
         fb.seal_block(entry);
 
         let ctx_ptr = fb.block_params(entry)[0];
-        let ptr_ty = self.module.target_config().pointer_type();
 
         let mut symtab = SymbolTable::new();
 
         for instr in ir {
             match instr {
                 Instr::Set(var, oper) => {
-                    compile_set(&mut fb, &mut symtab, var, oper);
+                    self.compile_set(&mut fb, &ctx_ptr, &mut symtab, var, oper);
                 }
                 _ => panic!("Unsupported instruction"),
             }
@@ -92,19 +88,48 @@ impl JitCompiler {
                 &ctx.func.signature,
             )
             .unwrap();
-        self.module.define_function(func_id, &mut ctx);
+        let _ = self.module.define_function(func_id, &mut ctx);
         self.module.clear_context(&mut ctx);
-        self.module.finalize_definitions();
+        let _ = self.module.finalize_definitions();
 
         self.module.get_finalized_function(func_id)
     }
+
+    fn compile_set(
+        &mut self,
+        fb: &mut FunctionBuilder,
+        ctx_ptr: &Value,
+        symtab: &mut SymbolTable,
+        var: &String,
+        oper: &Operand,
+    ) {
+        match oper {
+            Operand::Const(val) => {
+                let idx = symtab.index_for(var);
+                let offset = (idx * 8) as i32;
+                let val_ir = fb.ins().f64const(*val);
+
+                fb.ins().store(MemFlags::new(), val_ir, *ctx_ptr, offset)
+            }
+            _ => panic!("Unsupported oper"),
+        };
+    }
 }
 
-fn compile_set(fb: &mut FunctionBuilder, symtab: &mut SymbolTable, var: &String, oper: &Operand) {
-    match oper {
-        Operand::Const(cons) => {
-            let idx = symtab.index_for(var);
-        }
-        _ => panic!("Unsupported oper"),
-    }
+#[test]
+fn test_set_op() {
+    let ir = vec![Instr::Set("a".into(), Operand::Const(10.0))];
+    let mut compiler = JitCompiler::new();
+    let func_ptr = compiler.compile(&ir);
+
+    let mut context = ProcessorContext {
+        registers: [0.0; 256],
+    };
+
+    let jit_func =
+        unsafe { std::mem::transmute::<_, extern "C" fn(*mut ProcessorContext)>(func_ptr) };
+
+    jit_func(&mut context as *mut _);
+
+    assert_eq!(10.0, context.registers[0]);
 }

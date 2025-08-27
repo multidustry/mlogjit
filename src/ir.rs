@@ -6,7 +6,7 @@ pub enum Operand {
     String(String),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, PartialOrd)]
 pub enum OpKind {
     Add,
     Sub,
@@ -17,7 +17,7 @@ pub enum OpKind {
     Pow,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, PartialOrd)]
 pub enum Instr {
     Set(String, Operand),
     Op(String, OpKind, Operand, Option<Operand>),
