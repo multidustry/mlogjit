@@ -6,6 +6,14 @@ pub enum ParseError {
     UnknownInstruction(String),
 }
 
+pub fn parse_code(code: &str) -> Vec<Result<Instr, ParseError>> {
+    code.lines()
+        .into_iter()
+        .filter(|x| !x.is_empty())
+        .map(|line| parse_line(line))
+        .collect()
+}
+
 pub fn parse_line(line: &str) -> Result<Instr, ParseError> {
     let tokens: Vec<String> = split_tokens(line);
     if tokens.is_empty() {
@@ -54,8 +62,8 @@ pub fn parse_line(line: &str) -> Result<Instr, ParseError> {
 fn parse_operand(token: &str) -> Operand {
     if token == "null" {
         Operand::Null
-    } else if token.parse::<f64>().is_ok() {
-        Operand::Const(token.parse().unwrap())
+    } else if let Ok(val) = token.parse::<f64>() {
+        Operand::Const(val)
     } else if token.starts_with("\"") {
         Operand::String(token.to_string().replace("\"", ""))
     } else {

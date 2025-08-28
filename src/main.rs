@@ -1,41 +1,42 @@
-use jit::{JitCompiler, ProcessorContext};
+use crate::ctx::ProcessorContext;
+use env::DummyProcessorEnv;
+use jit::JitCompiler;
 use log::info;
-use parser::parse_line;
+use parser::{parse_code, parse_line};
 
+pub mod ctx;
+pub mod env;
 pub mod ir;
 pub mod jit;
 pub mod parser;
 
 static CODE: &str = r#"
 set a 10
-set b 10
+set b 20
+set b 15
+set c 30
+set d c
+op add result b d
 "#;
 fn main() {
     pretty_env_logger::init();
 
     info!("Code: \n {}", CODE);
-    let mut ir = Vec::new();
-    for i in CODE.lines() {
-        let oper = parse_line(i);
-        info!("{:?}", oper);
-        if let Ok(ir_instr) = oper {
-            ir.push(ir_instr);
-        }
-    }
-
+    let binding = parse_code(CODE);
+    let ir: Vec<_> = binding.iter().filter_map(|res| res.as_ref().ok()).collect(); // В проде лучше проверять есть ли ошибки в mlog коде а не просто отбрасывать их
     let mut compiler = JitCompiler::new();
     let func_ptr = compiler.compile(&ir);
 
-    let mut context = ProcessorContext {
-        registers: [0.0; 256],
+    let env = DummyProcessorEnv {};
+    let mut ctx = ProcessorContext::new(env);
+
+    let jit_func = unsafe {
+        std::mem::transmute::<_, extern "C" fn(*mut ProcessorContext<DummyProcessorEnv>)>(func_ptr)
     };
 
-    let jit_func =
-        unsafe { std::mem::transmute::<_, extern "C" fn(*mut ProcessorContext)>(func_ptr) };
+    info!("{:?}", ctx);
 
-    info!("{:?}", context);
+    jit_func(&mut ctx as *mut _);
 
-    jit_func(&mut context as *mut _);
-
-    info!("{:?}", context);
+    info!("{:?}", ctx);
 }
