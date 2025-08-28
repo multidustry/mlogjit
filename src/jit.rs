@@ -1,15 +1,19 @@
-use core::panic;
+use core::{fmt, panic};
 use std::{collections::HashMap, env::VarError};
 
-use cranelift_codegen::ir::{AbiParam, InstBuilder, MemFlags, MemoryType, Type, Value, types};
+use cranelift_codegen::{
+    bforest::Set,
+    ir::{AbiParam, FuncRef, InstBuilder, MemFlags, MemoryType, Type, Value, types},
+};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
-use cranelift_module::Module;
+use cranelift_module::{FuncId, Module};
 
 use crate::{
     ctx::ProcessorContext,
     env::DummyProcessorEnv,
     ir::{Instr, OpKind, Operand},
+    oper_functions::pow::host_pow,
 };
 
 pub struct SymbolTable {
@@ -39,13 +43,70 @@ impl SymbolTable {
 
 pub struct JitCompiler {
     pub module: JITModule,
+    pub host_functions: HostFunctions,
+}
+
+pub struct HostFunctions {
+    pub pow_func_id: FuncId,
+}
+
+pub struct FuncRefs {
+    pub pow_func_ref: FuncRef,
+}
+
+impl FuncRefs {
+    pub fn new(compiler: &mut JitCompiler, fb: &mut FunctionBuilder) -> Self {
+        Self {
+            pow_func_ref: compiler
+                .module
+                .declare_func_in_func(compiler.host_functions.pow_func_id, fb.func),
+        }
+    }
+}
+
+impl HostFunctions {
+    pub fn register_symbols(jit_builder: &mut JITBuilder) {
+        jit_builder.symbol("host_pow", host_pow as *const u8);
+    }
+
+    pub fn new(module: &mut JITModule) -> Self {
+        let pow_func_id = Self::declare_binary(module, "host_pow");
+        Self {
+            pow_func_id: pow_func_id,
+        }
+    }
+
+    fn declare_binary(module: &mut JITModule, name: &str) -> cranelift_module::FuncId {
+        let mut sig = module.make_signature();
+        sig.params.push(AbiParam::new(types::F64));
+        sig.params.push(AbiParam::new(types::F64));
+        sig.returns.push(AbiParam::new(types::F64));
+
+        module
+            .declare_function(name, cranelift_module::Linkage::Import, &sig)
+            .unwrap()
+    }
+    fn declare_unary(module: &mut JITModule, name: &str) -> cranelift_module::FuncId {
+        let mut sig = module.make_signature();
+        sig.params.push(AbiParam::new(types::F64));
+        sig.returns.push(AbiParam::new(types::F64));
+
+        module
+            .declare_function(name, cranelift_module::Linkage::Import, &sig)
+            .unwrap()
+    }
 }
 
 impl JitCompiler {
     pub fn new() -> Self {
-        let builder = JITBuilder::new(cranelift_module::default_libcall_names()).unwrap();
-        let module = JITModule::new(builder);
-        Self { module: module }
+        let mut builder = JITBuilder::new(cranelift_module::default_libcall_names()).unwrap();
+        HostFunctions::register_symbols(&mut builder);
+        let mut module = JITModule::new(builder);
+        let host_functions = HostFunctions::new(&mut module);
+        Self {
+            module: module,
+            host_functions: host_functions,
+        }
     }
 
     /// Compiles mlog ir into jit function.
@@ -58,6 +119,7 @@ impl JitCompiler {
         ctx.func.signature = sig;
         let mut fb_ctx = FunctionBuilderContext::new();
         let mut fb = FunctionBuilder::new(&mut ctx.func, &mut fb_ctx);
+        let mut func_refs = FuncRefs::new(self, &mut fb);
         let entry = fb.create_block();
         fb.append_block_params_for_function_params(entry);
         fb.switch_to_block(entry);
@@ -73,7 +135,16 @@ impl JitCompiler {
                     self.compile_set(&mut fb, &ctx_ptr, &mut symtab, var, oper);
                 }
                 Instr::Op(var, opkind, left, Some(right)) => {
-                    self.compile_op(&mut fb, &ctx_ptr, &mut symtab, var, opkind, left, right);
+                    self.compile_op(
+                        &mut fb,
+                        &ctx_ptr,
+                        &mut symtab,
+                        &mut func_refs,
+                        var,
+                        opkind,
+                        left,
+                        right,
+                    );
                 }
                 _ => panic!("Unsupported instruction"),
             };
@@ -125,23 +196,40 @@ impl JitCompiler {
         fb: &mut FunctionBuilder,
         ctx_ptr: &Value,
         symtab: &mut SymbolTable,
+        func_refs: &mut FuncRefs,
         var: &str,
         opkind: &OpKind,
         left: &Operand,
         right: &Operand,
     ) {
-        match opkind {
-            OpKind::Add => {
-                let left_ssa = oper_helper(fb, ctx_ptr, symtab, left);
-                let right_ssa = oper_helper(fb, ctx_ptr, symtab, right);
-                let var_offset = (symtab.index_for(var) * 8) as i32;
-
-                let result = fb.ins().fadd(left_ssa, right_ssa);
-                fb.ins()
-                    .store(MemFlags::new(), result, *ctx_ptr, var_offset);
+        let left_ssa = oper_helper(fb, ctx_ptr, symtab, left);
+        let right_ssa = oper_helper(fb, ctx_ptr, symtab, right);
+        let var_offset = (symtab.index_for(var) * 8) as i32;
+        let result = match opkind {
+            OpKind::Add => fb.ins().fadd(left_ssa, right_ssa),
+            OpKind::Sub => fb.ins().fsub(left_ssa, right_ssa),
+            OpKind::Mul => fb.ins().fmul(left_ssa, right_ssa),
+            OpKind::Div => fb.ins().fdiv(left_ssa, right_ssa),
+            OpKind::Idiv => {
+                let t = fb.ins().fdiv(left_ssa, right_ssa);
+                fb.ins().floor(t)
             }
-            _ => todo!("Only addition supported now"),
-        }
+            OpKind::Mod => {
+                let div = fb.ins().fdiv(left_ssa, right_ssa);
+                let floor_div = fb.ins().floor(div);
+                let mult = fb.ins().fmul(floor_div, right_ssa);
+                fb.ins().fsub(left_ssa, mult)
+            }
+            OpKind::Pow => {
+                let call = fb
+                    .ins()
+                    .call(func_refs.pow_func_ref, &[left_ssa, right_ssa]);
+                fb.inst_results(call)[0]
+            }
+            _ => todo!("This opkind don't supported now: {:?}", opkind),
+        };
+        fb.ins()
+            .store(MemFlags::new(), result, *ctx_ptr, var_offset);
     }
 }
 
