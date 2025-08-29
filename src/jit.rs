@@ -1,5 +1,5 @@
 use core::{fmt, panic};
-use std::{collections::HashMap, env::VarError};
+use std::{cmp::Ordering, collections::HashMap, env::VarError};
 
 use cranelift_codegen::{
     bforest::Set,
@@ -156,7 +156,7 @@ impl JitCompiler {
         let func_id = self
             .module
             .declare_function(
-                "jit_func",
+                &format!("jit_func_{:?}", ir),
                 cranelift_module::Linkage::Export,
                 &ctx.func.signature,
             )
