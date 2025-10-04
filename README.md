@@ -70,3 +70,11 @@ Typical execution: ~100-500 nanoseconds (depends on code complexity)
 ## License
 
 Apache-2.0
+
+## TODO:
+1. CompiledFunction struct с Arc<JITModule>
+2. Метод execute() вместо сырого указателя
+3. Top-level compile() функция для простоты
+4. Nightly feature для Fn traits
+5. Обновить README с новыми примерами
+6. Тест на dangling pointer (должен падать сейчас)
