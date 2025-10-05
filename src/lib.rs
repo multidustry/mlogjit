@@ -1,3 +1,4 @@
+pub mod compiled_function;
 pub mod ctx;
 pub mod env;
 pub mod ir;

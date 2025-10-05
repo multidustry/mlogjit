@@ -1,6 +1,4 @@
 use core::{fmt, panic};
-use std::{cmp::Ordering, collections::HashMap, env::VarError};
-
 use cranelift_codegen::{
     bforest::Set,
     ir::{AbiParam, FuncRef, InstBuilder, MemFlags, MemoryType, Type, Value, types},
@@ -8,8 +6,11 @@ use cranelift_codegen::{
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{FuncId, Module};
+use std::sync::Arc;
+use std::{cmp::Ordering, collections::HashMap, env::VarError};
 
 use crate::{
+    compiled_function::CompiledFunction,
     ctx::ProcessorContext,
     env::DummyProcessorEnv,
     ir::{Instr, OpKind, Operand},
@@ -39,11 +40,6 @@ impl SymbolTable {
             i
         }
     }
-}
-
-pub struct JitCompiler {
-    pub module: JITModule,
-    pub host_functions: HostFunctions,
 }
 
 pub struct HostFunctions {
@@ -97,6 +93,11 @@ impl HostFunctions {
     }
 }
 
+pub struct JitCompiler {
+    pub module: Arc<JITModule>,
+    pub host_functions: HostFunctions,
+}
+
 impl JitCompiler {
     pub fn new() -> Self {
         let mut builder = JITBuilder::new(cranelift_module::default_libcall_names()).unwrap();
@@ -110,7 +111,7 @@ impl JitCompiler {
     }
 
     /// Compiles mlog ir into jit function.
-    pub fn compile(&mut self, ir: &[&Instr]) -> *const u8 {
+    pub fn compile(&mut self, ir: &[&Instr]) -> CompiledFunction {
         let mut sig = self.module.make_signature();
         // fn(ctx: *mut ProcessorContext)
         sig.params
@@ -165,7 +166,10 @@ impl JitCompiler {
         self.module.clear_context(&mut ctx);
         let _ = self.module.finalize_definitions();
 
-        self.module.get_finalized_function(func_id)
+        CompiledFunction {
+            func: func_id,
+            module: Arc::clone(&self.module),
+        }
     }
 
     fn compile_set(
