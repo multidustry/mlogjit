@@ -13,35 +13,7 @@ Compiles MLOG instructions to native machine code for high-performance execution
 
 ## Quick Start
 
-```rust
-use mlogjit::{JitCompiler, ProcessorContext, DummyProcessorEnv, parse_code};
-
-// MLOG code
-let code = r#"
-set a 10
-set b 2
-op pow result a b
-"#;
-
-// Parse to IR
-let parsed = parse_code(code);
-let ir: Vec<_> = parsed.iter().filter_map(|r| r.as_ref().ok()).collect();
-
-// Compile to native code
-let mut compiler = JitCompiler::new();
-let func_ptr = compiler.compile(&ir);
-
-// Execute
-let mut ctx = ProcessorContext::new(DummyProcessorEnv {});
-let jit_func = unsafe {
-    std::mem::transmute::<_, extern "C" fn(*mut ProcessorContext<DummyProcessorEnv>)>(func_ptr)
-};
-
-jit_func(&mut ctx);
-
-// Access results in ctx.registers
-println!("Result: {}", ctx.registers); // result variable
-```
+See [examples](examples/main.rs) 
 
 ## API
 

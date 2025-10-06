@@ -16,11 +16,6 @@ op pow result b d
 op pow result2 b a
 "#;
 
-static CODE2: &str = r#"
-set a 10
-set b 2
-op pow result a b
-"#;
 fn main() {
     pretty_env_logger::init();
 
@@ -31,7 +26,7 @@ fn main() {
     ir.iter().for_each(|it| info!("{:?}", it));
 
     let mut compiler = JitCompiler::new();
-    let func_ptr = compiler.compile(&ir);
+    let func = compiler.compile(&ir);
 
     info!(
         "Time for compiling mlog: {} ns",
@@ -41,14 +36,10 @@ fn main() {
     let env = DummyProcessorEnv {};
     let mut ctx = ProcessorContext::new(env);
 
-    let jit_func = unsafe {
-        std::mem::transmute::<_, extern "C" fn(*mut ProcessorContext<DummyProcessorEnv>)>(func_ptr)
-    };
-
     info!("{:?}", ctx);
 
     let start_jit_time = Instant::now();
-    jit_func(&mut ctx as *mut _);
+    func.exec(&mut ctx);
     info!(
         "Time for running jit func: {} ns",
         start_jit_time.elapsed().as_nanos()

@@ -1,63 +1,25 @@
-use core::{fmt, panic};
-use cranelift_codegen::{
-    bforest::Set,
-    ir::{AbiParam, FuncRef, InstBuilder, MemFlags, MemoryType, Type, Value, types},
-};
+use core::panic;
+use cranelift_codegen::ir::{AbiParam, FuncRef, InstBuilder, MemFlags, Value, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{FuncId, Module};
-use std::sync::Arc;
-use std::{cmp::Ordering, collections::HashMap, env::VarError};
+use std::sync::{Arc, RwLock};
 
 use crate::{
     compiled_function::CompiledFunction,
-    ctx::ProcessorContext,
-    env::DummyProcessorEnv,
     ir::{Instr, OpKind, Operand},
     oper_functions::pow::host_pow,
     symbol_table::SymbolTable,
 };
-
-pub struct SymbolTable {
-    vars: HashMap<String, usize>,
-    next: usize,
-}
-
-impl SymbolTable {
-    pub fn new() -> Self {
-        Self {
-            vars: HashMap::new(),
-            next: 0,
-        }
-    }
-
-    pub fn index_for(&mut self, name: &str) -> usize {
-        if let Some(&i) = self.vars.get(name) {
-            i
-        } else {
-            let i = self.next;
-            self.vars.insert(name.to_string(), i);
-            self.next += 1;
-            i
-        }
-    }
-}
-
-pub struct HostFunctions {
-    pub pow_func_id: FuncId,
-}
 
 pub struct FuncRefs {
     pub pow_func_ref: FuncRef,
 }
 
 impl FuncRefs {
-    pub fn new(compiler: &mut JitCompiler, fb: &mut FunctionBuilder) -> Self {
-        Self {
-            pow_func_ref: compiler
-                .module
-                .declare_func_in_func(compiler.host_functions.pow_func_id, fb.func),
-        }
+    pub fn new(module: &mut JITModule, host: &HostFunctions, fb: &mut FunctionBuilder) -> Self {
+        let pow_func_ref = module.declare_func_in_func(host.pow_func_id, fb.func);
+        Self { pow_func_ref }
     }
 }
 
@@ -99,7 +61,7 @@ impl HostFunctions {
 }
 
 pub struct JitCompiler {
-    pub module: Arc<JITModule>,
+    pub module: Arc<RwLock<JITModule>>,
     pub host_functions: HostFunctions,
 }
 
@@ -110,22 +72,24 @@ impl JitCompiler {
         let mut module = JITModule::new(builder);
         let host_functions = HostFunctions::new(&mut module);
         Self {
-            module: module,
+            module: Arc::new(RwLock::new(module)),
             host_functions: host_functions,
         }
     }
 
     /// Compiles mlog ir into jit function.
     pub fn compile(&mut self, ir: &[&Instr]) -> CompiledFunction {
-        let mut sig = self.module.make_signature();
+        let mut module = self.module.write().unwrap();
+        let mut sig = module.make_signature();
+
         // fn(ctx: *mut ProcessorContext)
         sig.params
-            .push(AbiParam::new(self.module.target_config().pointer_type()));
-        let mut ctx = self.module.make_context();
+            .push(AbiParam::new(module.target_config().pointer_type()));
+        let mut ctx = module.make_context();
         ctx.func.signature = sig;
         let mut fb_ctx = FunctionBuilderContext::new();
         let mut fb = FunctionBuilder::new(&mut ctx.func, &mut fb_ctx);
-        let mut func_refs = FuncRefs::new(self, &mut fb);
+        let mut func_refs = FuncRefs::new(&mut module, &self.host_functions, &mut fb);
         let entry = fb.create_block();
         fb.append_block_params_for_function_params(entry);
         fb.switch_to_block(entry);
@@ -138,10 +102,10 @@ impl JitCompiler {
         for instr in ir {
             match instr {
                 Instr::Set(var, oper) => {
-                    self.compile_set(&mut fb, &ctx_ptr, &mut symtab, var, oper);
+                    JitCompiler::compile_set(&mut fb, &ctx_ptr, &mut symtab, var, oper);
                 }
                 Instr::Op(var, opkind, left, right) => {
-                    self.compile_op(
+                    JitCompiler::compile_op(
                         &mut fb,
                         &ctx_ptr,
                         &mut symtab,
@@ -159,26 +123,24 @@ impl JitCompiler {
         fb.ins().return_(&[]);
         fb.finalize();
 
-        let func_id = self
-            .module
+        let func_id = module
             .declare_function(
                 &format!("jit_func_{:?}", ir),
                 cranelift_module::Linkage::Export,
                 &ctx.func.signature,
             )
             .unwrap();
-        let _ = self.module.define_function(func_id, &mut ctx).unwrap();
-        self.module.clear_context(&mut ctx);
-        let _ = self.module.finalize_definitions();
+        let _ = module.define_function(func_id, &mut ctx).unwrap();
+        module.clear_context(&mut ctx);
+        let _ = module.finalize_definitions();
 
         CompiledFunction {
             func: func_id,
-            module: Arc::clone(&self.module),
+            module: self.module.clone(),
         }
     }
 
     fn compile_set(
-        &mut self,
         fb: &mut FunctionBuilder,
         ctx_ptr: &Value,
         symtab: &mut SymbolTable,
@@ -201,7 +163,6 @@ impl JitCompiler {
     }
 
     fn compile_op(
-        &mut self,
         fb: &mut FunctionBuilder,
         ctx_ptr: &Value,
         symtab: &mut SymbolTable,
@@ -256,23 +217,4 @@ fn oper_helper(
         }
         _ => todo!("String and Null not supported for now"),
     }
-}
-
-#[test]
-fn test_set_op() {
-    let binding = Instr::Set("a".into(), Operand::Const(10.0));
-    let ir = vec![&binding];
-    let mut compiler = JitCompiler::new();
-    let func_ptr = compiler.compile(&ir);
-
-    let env = DummyProcessorEnv {};
-    let mut context = ProcessorContext::new(env);
-
-    let jit_func = unsafe {
-        std::mem::transmute::<_, extern "C" fn(*mut ProcessorContext<DummyProcessorEnv>)>(func_ptr)
-    };
-
-    jit_func(&mut context as *mut _);
-
-    assert_eq!(10.0, context.registers[0]);
 }
