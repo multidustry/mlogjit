@@ -1,19 +1,50 @@
-use core::panic;
-
-use cranelift_codegen::ir::{AbiParam, FuncRef, InstBuilder, MemFlags, Value, types};
+use core::{fmt, panic};
+use cranelift_codegen::{
+    bforest::Set,
+    ir::{AbiParam, FuncRef, InstBuilder, MemFlags, MemoryType, Type, Value, types},
+};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{FuncId, Module};
+use std::sync::Arc;
+use std::{cmp::Ordering, collections::HashMap, env::VarError};
 
 use crate::{
+    compiled_function::CompiledFunction,
+    ctx::ProcessorContext,
+    env::DummyProcessorEnv,
     ir::{Instr, OpKind, Operand},
     oper_functions::pow::host_pow,
     symbol_table::SymbolTable,
 };
 
-pub struct JitCompiler {
-    pub module: JITModule,
-    pub host_functions: HostFunctions,
+pub struct SymbolTable {
+    vars: HashMap<String, usize>,
+    next: usize,
+}
+
+impl SymbolTable {
+    pub fn new() -> Self {
+        Self {
+            vars: HashMap::new(),
+            next: 0,
+        }
+    }
+
+    pub fn index_for(&mut self, name: &str) -> usize {
+        if let Some(&i) = self.vars.get(name) {
+            i
+        } else {
+            let i = self.next;
+            self.vars.insert(name.to_string(), i);
+            self.next += 1;
+            i
+        }
+    }
+}
+
+pub struct HostFunctions {
+    pub pow_func_id: FuncId,
 }
 
 pub struct FuncRefs {
@@ -67,6 +98,11 @@ impl HostFunctions {
     }
 }
 
+pub struct JitCompiler {
+    pub module: Arc<JITModule>,
+    pub host_functions: HostFunctions,
+}
+
 impl JitCompiler {
     pub fn new() -> Self {
         let mut builder = JITBuilder::new(cranelift_module::default_libcall_names()).unwrap();
@@ -80,7 +116,7 @@ impl JitCompiler {
     }
 
     /// Compiles mlog ir into jit function.
-    pub fn compile(&mut self, ir: &[&Instr]) -> *const u8 {
+    pub fn compile(&mut self, ir: &[&Instr]) -> CompiledFunction {
         let mut sig = self.module.make_signature();
         // fn(ctx: *mut ProcessorContext)
         sig.params
@@ -133,8 +169,12 @@ impl JitCompiler {
             .unwrap();
         let _ = self.module.define_function(func_id, &mut ctx).unwrap();
         self.module.clear_context(&mut ctx);
-        let _ = self.module.finalize_definitions().unwrap();
-        self.module.get_finalized_function(func_id)
+        let _ = self.module.finalize_definitions();
+
+        CompiledFunction {
+            func: func_id,
+            module: Arc::clone(&self.module),
+        }
     }
 
     fn compile_set(
