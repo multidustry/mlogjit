@@ -1,53 +1,19 @@
-use core::{fmt, panic};
-use std::{cmp::Ordering, collections::HashMap, env::VarError};
+use core::panic;
 
-use cranelift_codegen::{
-    bforest::Set,
-    ir::{AbiParam, FuncRef, InstBuilder, MemFlags, MemoryType, Type, Value, types},
-};
+use cranelift_codegen::ir::{AbiParam, FuncRef, InstBuilder, MemFlags, Value, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{FuncId, Module};
 
 use crate::{
-    ctx::ProcessorContext,
-    env::DummyProcessorEnv,
     ir::{Instr, OpKind, Operand},
     oper_functions::pow::host_pow,
+    symbol_table::SymbolTable,
 };
-
-pub struct SymbolTable {
-    vars: HashMap<String, usize>,
-    next: usize,
-}
-
-impl SymbolTable {
-    pub fn new() -> Self {
-        Self {
-            vars: HashMap::new(),
-            next: 0,
-        }
-    }
-
-    pub fn index_for(&mut self, name: &str) -> usize {
-        if let Some(&i) = self.vars.get(name) {
-            i
-        } else {
-            let i = self.next;
-            self.vars.insert(name.to_string(), i);
-            self.next += 1;
-            i
-        }
-    }
-}
 
 pub struct JitCompiler {
     pub module: JITModule,
     pub host_functions: HostFunctions,
-}
-
-pub struct HostFunctions {
-    pub pow_func_id: FuncId,
 }
 
 pub struct FuncRefs {
@@ -62,6 +28,10 @@ impl FuncRefs {
                 .declare_func_in_func(compiler.host_functions.pow_func_id, fb.func),
         }
     }
+}
+
+pub struct HostFunctions {
+    pub pow_func_id: FuncId,
 }
 
 impl HostFunctions {
@@ -134,7 +104,7 @@ impl JitCompiler {
                 Instr::Set(var, oper) => {
                     self.compile_set(&mut fb, &ctx_ptr, &mut symtab, var, oper);
                 }
-                Instr::Op(var, opkind, left, Some(right)) => {
+                Instr::Op(var, opkind, left, right) => {
                     self.compile_op(
                         &mut fb,
                         &ctx_ptr,
@@ -161,10 +131,9 @@ impl JitCompiler {
                 &ctx.func.signature,
             )
             .unwrap();
-        let _ = self.module.define_function(func_id, &mut ctx);
+        let _ = self.module.define_function(func_id, &mut ctx).unwrap();
         self.module.clear_context(&mut ctx);
-        let _ = self.module.finalize_definitions();
-
+        let _ = self.module.finalize_definitions().unwrap();
         self.module.get_finalized_function(func_id)
     }
 

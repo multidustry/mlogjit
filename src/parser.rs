@@ -15,7 +15,7 @@ pub fn parse_code(code: &str) -> Vec<Result<Instr, ParseError>> {
 }
 
 pub fn parse_line(line: &str) -> Result<Instr, ParseError> {
-    let tokens: Vec<String> = split_tokens(line);
+    let tokens: Vec<String> = tokenizer(line);
     if tokens.is_empty() {
         return Err(ParseError::WrongArgumentCount);
     }
@@ -30,7 +30,7 @@ pub fn parse_line(line: &str) -> Result<Instr, ParseError> {
             Ok(Instr::Set(var.to_string(), oper))
         }
         "op" => {
-            if tokens.len() < 4 || tokens.len() > 5 {
+            if tokens.len() != 5 {
                 return Err(ParseError::WrongArgumentCount);
             }
             let operation = match tokens[1].as_str() {
@@ -46,14 +46,9 @@ pub fn parse_line(line: &str) -> Result<Instr, ParseError> {
                 }
             };
             let var = &tokens[2];
-            if tokens.len() == 4 {
-                let op1 = parse_operand(&tokens[3]);
-                Ok(Instr::Op(var.to_string(), operation, op1, None))
-            } else {
-                let op1 = parse_operand(&tokens[3]);
-                let op2 = parse_operand(&tokens[4]);
-                Ok(Instr::Op(var.to_string(), operation, op1, Some(op2)))
-            }
+            let op1 = parse_operand(&tokens[3]);
+            let op2 = parse_operand(&tokens[4]);
+            Ok(Instr::Op(var.to_string(), operation, op1, op2))
         }
         _ => Err(ParseError::UnknownInstruction(tokens[0].to_string())),
     }
@@ -71,7 +66,7 @@ fn parse_operand(token: &str) -> Operand {
     }
 }
 
-fn split_tokens(input: &str) -> Vec<String> {
+fn tokenizer(input: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut chars = input.chars().peekable();
     while let Some(&c) = chars.peek() {
@@ -117,12 +112,12 @@ fn split_tokens(input: &str) -> Vec<String> {
 
 #[test]
 fn spliting() {
-    assert_eq!(vec!["a", "\"a\""], split_tokens("a \"a\""));
+    assert_eq!(vec!["a", "\"a\""], tokenizer("a \"a\""));
 }
 
 #[test]
 fn spliting_empty() {
-    assert_eq!(Vec::<String>::new(), split_tokens(""));
+    assert_eq!(Vec::<String>::new(), tokenizer(""));
 }
 
 #[test]

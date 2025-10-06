@@ -54,34 +54,4 @@ fn main() {
         start_jit_time.elapsed().as_nanos()
     );
     info!("{:?}", ctx);
-
-    let binding2 = parse_code(CODE2);
-    let start_compiling_time_2 = Instant::now();
-
-    let ir2: Vec<_> = binding2
-        .iter()
-        .filter_map(|res| res.as_ref().ok())
-        .collect(); // В проде лучше проверять есть ли ошибки в mlog коде а не просто отбрасывать их
-    let func_ptr2 = compiler.compile(&ir2);
-
-    info!(
-        "Time for compiling mlog: {} ns",
-        start_compiling_time_2.elapsed().as_nanos()
-    );
-    let env2 = DummyProcessorEnv {};
-    let mut ctx2 = ProcessorContext::new(env2);
-
-    let jit_func2 = unsafe {
-        std::mem::transmute::<_, extern "C" fn(*mut ProcessorContext<DummyProcessorEnv>)>(func_ptr2)
-    };
-
-    info!("{:?}", ctx2);
-
-    let start_jit_time2 = Instant::now();
-    jit_func2(&mut ctx2 as *mut _);
-    info!(
-        "Time for running jit func: {} ns",
-        start_jit_time2.elapsed().as_nanos()
-    );
-    info!("{:?}", ctx2);
 }

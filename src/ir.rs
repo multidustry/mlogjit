@@ -18,7 +18,20 @@ pub enum OpKind {
 }
 
 #[derive(Debug, PartialEq, PartialOrd)]
+pub enum JumpCondition {
+    Equal,
+    NotEqual,
+    LessThan,
+    LessThanEq,
+    GreaterThan,
+    GreaterThanEq,
+    StrictEqual,
+    Always,
+}
+
+#[derive(Debug, PartialEq, PartialOrd)]
 pub enum Instr {
     Set(String, Operand),
-    Op(String, OpKind, Operand, Option<Operand>),
+    Op(String, OpKind, Operand, Operand),
+    Jump(i32, JumpCondition, Operand, Operand),
 }
