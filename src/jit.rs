@@ -133,11 +133,8 @@ impl JitCompiler {
         let _ = module.define_function(func_id, &mut ctx).unwrap();
         module.clear_context(&mut ctx);
         let _ = module.finalize_definitions();
-
-        CompiledFunction {
-            func: func_id,
-            module: self.module.clone(),
-        }
+        drop(module);
+        CompiledFunction::new(Arc::clone(&self.module), func_id)
     }
 
     fn compile_set(
